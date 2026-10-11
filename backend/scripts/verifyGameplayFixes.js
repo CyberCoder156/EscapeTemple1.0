@@ -57,8 +57,8 @@ async function runTests() {
   const valRes = await api('GET', '/api/levels/validate-all');
   assert(valRes.status === 200, 'GET /api/levels/validate-all returns 200');
   assert(valRes.body.allValid === true, 'All playable levels pass comprehensive validation');
-  assert(valRes.body.totalChecked === 10, 'All 10 playable levels inspected');
-  assert(valRes.body.levels.every(l => l.valid), 'All 10 playable levels are valid with >= 1 question, key, and exit door');
+  assert(valRes.body.totalChecked === 25, `All ${valRes.body.totalChecked} playable levels inspected (expected 25)`);
+  assert(valRes.body.levels.every(l => l.valid), `All ${valRes.body.totalChecked} playable levels are valid with >= 1 question, key, and exit door`);
 
   // Verify hiding spots are diverse
   const hidingTypes = valRes.body.levels.map(r => r.details.keyHidingObject.type);
@@ -179,6 +179,179 @@ async function runTests() {
 
   const l1InvAfterL2Restart = await api('GET', `/api/players/${testPlayer}/inventory?levelId=1`);
   assert(l1InvAfterL2Restart.body.length === 1, 'Level 1 inventory was NOT deleted when Level 2 was restarted');
+
+  // --- TEST SUITE 8: COMPUTER SCIENCE 5-LEVEL DISCIPLINE VERIFICATION ---
+  console.log('\n--- TEST SUITE 8: Computer Science 5-Level Discipline & Progression ---');
+  const csLevelsRes = await api('GET', '/api/subjects/2/levels');
+  assert(csLevelsRes.status === 200, 'GET /api/subjects/2/levels returns 200 OK');
+  assert(csLevelsRes.body.length === 5, `Computer Science has exactly 5 levels (found: ${csLevelsRes.body.length})`);
+
+  const expectedCsNames = [
+    'The Binary Vault',
+    'The Algorithm Crypt',
+    'The Network Nexus',
+    'The Database Vault',
+    "The Cyber Guardian's Sanctum"
+  ];
+
+  csLevelsRes.body.forEach((lvl, idx) => {
+    assert(lvl.level_number === idx + 1, `CS Level ${idx + 1} has correct level_number ${idx + 1}`);
+    assert(lvl.name === expectedCsNames[idx], `CS Level ${idx + 1} name is "${expectedCsNames[idx]}"`);
+  });
+
+  // Verify room objects and questions for newly added CS levels (11, 12, 13)
+  for (const csLvlId of [11, 12, 13]) {
+    const objs = await api('GET', `/api/levels/${csLvlId}/objects`);
+    assert(objs.body.length === 8, `CS Level ${csLvlId} loads all 8 room objects`);
+    const qList = await api('GET', `/api/levels/${csLvlId}/questions`);
+    assert(qList.body.length >= 2, `CS Level ${csLvlId} has at least 2 questions (found: ${qList.body.length})`);
+  }
+
+  // Test full sequential progression through Computer Science levels 1 -> 2 -> 3 -> 4 -> 5
+  const csPlayer = 'cs-master-' + Date.now();
+  const csProgressionChain = [
+    { levelId: 6, keyObjId: 67, answers: [{ qId: 4, ans: 'Stack' }, { qId: 15, ans: '10' }], expectedNextId: 7 },
+    { levelId: 7, keyObjId: 72, answers: [{ qId: 16, ans: 'O(log n)' }, { qId: 17, ans: 'Divide and Conquer' }], expectedNextId: 11 },
+    { levelId: 11, keyObjId: 115, answers: [{ qId: 21, ans: 'Transport Layer' }, { qId: 22, ans: '443' }], expectedNextId: 12 },
+    { levelId: 12, keyObjId: 124, answers: [{ qId: 23, ans: 'DISTINCT' }, { qId: 24, ans: 'Atomicity' }], expectedNextId: 13 },
+    { levelId: 13, keyObjId: 136, answers: [{ qId: 25, ans: 'Turing Machine' }, { qId: 26, ans: 'P versus NP' }], expectedNextId: null }
+  ];
+
+  for (let step = 0; step < csProgressionChain.length; step++) {
+    const stepData = csProgressionChain[step];
+    const lvlNum = step + 1;
+
+    // Start level
+    const startRes = await api('POST', `/api/players/${csPlayer}/levels/${stepData.levelId}/start`);
+    assert(startRes.body.success === true, `Player entered CS Level ${lvlNum} (id: ${stepData.levelId})`);
+
+    // Discover key
+    const keyRes = await api('POST', `/api/levels/${stepData.levelId}/objects/${stepData.keyObjId}/interact`, { playerId: csPlayer });
+    assert(keyRes.body.success === true && keyRes.body.itemDiscovered?.item_type === 'key', `Player discovered key for CS Level ${lvlNum}`);
+
+    // Answer questions
+    for (const qItem of stepData.answers) {
+      const ansRes = await api('POST', `/api/questions/${qItem.qId}/answer`, {
+        playerId: csPlayer,
+        levelId: stepData.levelId,
+        selectedOption: qItem.ans
+      });
+      assert(ansRes.body.isCorrect === true || ansRes.body.correct === true, `Player solved Q${qItem.qId} correctly`);
+    }
+
+    // Verify exit door is visible
+    const sessRes = await api('GET', `/api/levels/${stepData.levelId}/question-session?playerId=${csPlayer}`);
+    assert(sessRes.body.isDoorVisible === true, `Exit door revealed for CS Level ${lvlNum}`);
+
+    // Complete level
+    const compRes = await api('POST', `/api/players/${csPlayer}/levels/${stepData.levelId}/complete`, {
+      finalScore: 100,
+      timeRemaining: 20
+    });
+    assert(compRes.body.success === true, `CS Level ${lvlNum} escaped successfully`);
+
+    if (stepData.expectedNextId !== null) {
+      assert(compRes.body.nextLevel && compRes.body.nextLevel.id === stepData.expectedNextId, `Next level unlocked: Level ID ${stepData.expectedNextId}`);
+    } else {
+      assert(!compRes.body.nextLevel, 'CS Level 5 is apex chamber: entire discipline completed!');
+    }
+  }
+
+  // --- TEST SUITE 9: VERIFY ALL SUBJECTS HAVE EXACTLY 5 LEVELS & PROGRESSION ---
+  console.log('\n--- TEST SUITE 9: All 5 Subjects Exactly 5 Levels & Progression ---');
+  const subjectsRes = await api('GET', '/api/subjects');
+  assert(subjectsRes.status === 200, 'GET /api/subjects returns 200 OK');
+  assert(subjectsRes.body.length === 5, `EscapeTemple has 5 subjects (found: ${subjectsRes.body.length})`);
+
+  for (const subj of subjectsRes.body) {
+    const sLevelsRes = await api('GET', `/api/subjects/${subj.id}/levels`);
+    assert(sLevelsRes.status === 200, `GET /api/subjects/${subj.id}/levels returns 200 OK`);
+    assert(sLevelsRes.body.length === 5, `Subject "${subj.name}" (ID ${subj.id}) has exactly 5 levels (found: ${sLevelsRes.body.length})`);
+    
+    // Check level numbers 1 through 5
+    sLevelsRes.body.forEach((lvl, idx) => {
+      assert(lvl.level_number === idx + 1, `${subj.name} level ${idx + 1} has correct level_number ${idx + 1}`);
+    });
+  }
+
+  // Verify all 12 newly added levels (14-25) have 8 objects and >= 2 questions
+  for (let lId = 14; lId <= 25; lId++) {
+    const objs = await api('GET', `/api/levels/${lId}/objects`);
+    assert(objs.body.length === 8, `Level ${lId} loads all 8 room objects`);
+    const qList = await api('GET', `/api/levels/${lId}/questions`);
+    assert(qList.body.length >= 2, `Level ${lId} has at least 2 questions (found: ${qList.body.length})`);
+  }
+
+  // Helper function to test progression through a subject
+  async function testSubjectProgression(subjectName, playerPrefix, chain) {
+    const pId = playerPrefix + '-' + Date.now();
+    for (let step = 0; step < chain.length; step++) {
+      const stepData = chain[step];
+      const lvlNum = step + 1;
+
+      // Start level
+      const startRes = await api('POST', `/api/players/${pId}/levels/${stepData.levelId}/start`);
+      assert(startRes.body.success === true, `Player entered ${subjectName} Level ${lvlNum} (id: ${stepData.levelId})`);
+
+      // Discover key
+      const keyRes = await api('POST', `/api/levels/${stepData.levelId}/objects/${stepData.keyObjId}/interact`, { playerId: pId });
+      assert(keyRes.body.success === true && keyRes.body.itemDiscovered?.item_type === 'key', `Player discovered key for ${subjectName} Level ${lvlNum}`);
+
+      // Answer questions
+      for (const qItem of stepData.answers) {
+        const ansRes = await api('POST', `/api/questions/${qItem.qId}/answer`, {
+          playerId: pId,
+          levelId: stepData.levelId,
+          selectedOption: qItem.ans
+        });
+        assert(ansRes.body.isCorrect === true || ansRes.body.correct === true, `Player solved Q${qItem.qId} correctly`);
+      }
+
+      // Verify exit door is visible
+      const sessRes = await api('GET', `/api/levels/${stepData.levelId}/question-session?playerId=${pId}`);
+      assert(sessRes.body.isDoorVisible === true, `Exit door revealed for ${subjectName} Level ${lvlNum}`);
+
+      // Complete level
+      const compRes = await api('POST', `/api/players/${pId}/levels/${stepData.levelId}/complete`, {
+        finalScore: 100,
+        timeRemaining: 20
+      });
+      assert(compRes.body.success === true, `${subjectName} Level ${lvlNum} escaped successfully`);
+
+      if (stepData.expectedNextId !== null) {
+        assert(compRes.body.nextLevel && compRes.body.nextLevel.id === stepData.expectedNextId, `Next level unlocked: Level ID ${stepData.expectedNextId}`);
+      } else {
+        assert(!compRes.body.nextLevel, `${subjectName} Level 5 is apex chamber: subject discipline completed!`);
+      }
+    }
+  }
+
+  // Test Physics progression
+  await testSubjectProgression('Physics', 'phys-master', [
+    { levelId: 8, keyObjId: 85, answers: [{ qId: 5, ans: '9.8 m/s²' }, { qId: 18, ans: 'F = m * a' }], expectedNextId: 14 },
+    { levelId: 14, keyObjId: 142, answers: [{ qId: 27, ans: 'Refraction' }, { qId: 28, ans: '300,000 km/s' }], expectedNextId: 15 },
+    { levelId: 15, keyObjId: 155, answers: [{ qId: 29, ans: '-273.15°C' }, { qId: 30, ans: 'First Law' }], expectedNextId: 16 },
+    { levelId: 16, keyObjId: 164, answers: [{ qId: 31, ans: 'V = I * R' }, { qId: 32, ans: 'Tesla' }], expectedNextId: 17 },
+    { levelId: 17, keyObjId: 176, answers: [{ qId: 33, ans: 'Heisenberg Uncertainty Principle' }, { qId: 34, ans: 'Speed of Light' }], expectedNextId: null }
+  ]);
+
+  // Test Chemistry progression
+  await testSubjectProgression('Chemistry', 'chem-master', [
+    { levelId: 9, keyObjId: 94, answers: [{ qId: 6, ans: 'H2O' }, { qId: 19, ans: '7' }], expectedNextId: 18 },
+    { levelId: 18, keyObjId: 181, answers: [{ qId: 35, ans: 'Hydrogen' }, { qId: 36, ans: 'Noble Gases' }], expectedNextId: 19 },
+    { levelId: 19, keyObjId: 192, answers: [{ qId: 37, ans: 'Covalent Bond' }, { qId: 38, ans: 'Sodium Chloride' }], expectedNextId: 20 },
+    { levelId: 20, keyObjId: 205, answers: [{ qId: 39, ans: 'Catalyst' }, { qId: 40, ans: 'Exothermic' }], expectedNextId: 21 },
+    { levelId: 21, keyObjId: 216, answers: [{ qId: 41, ans: 'Avogadro Number' }, { qId: 42, ans: 'Diamond' }], expectedNextId: null }
+  ]);
+
+  // Test General Knowledge progression
+  await testSubjectProgression('General Knowledge', 'gk-master', [
+    { levelId: 10, keyObjId: 106, answers: [{ qId: 7, ans: 'Lighthouse of Alexandria' }, { qId: 20, ans: 'Nile River' }], expectedNextId: 22 },
+    { levelId: 22, keyObjId: 224, answers: [{ qId: 43, ans: 'Mesopotamia' }, { qId: 44, ans: 'Silk Road' }], expectedNextId: 23 },
+    { levelId: 23, keyObjId: 235, answers: [{ qId: 45, ans: 'Mount Everest' }, { qId: 46, ans: 'Mariana Trench' }], expectedNextId: 24 },
+    { levelId: 24, keyObjId: 241, answers: [{ qId: 47, ans: 'Maya' }, { qId: 48, ans: 'Rosetta Stone' }], expectedNextId: 25 },
+    { levelId: 25, keyObjId: 256, answers: [{ qId: 49, ans: 'Aristotle' }, { qId: 50, ans: 'Antikythera Mechanism' }], expectedNextId: null }
+  ]);
 
   console.log('\n==================================================');
   console.log(`SUMMARY: ${passedCount} / ${totalTests} tests passed (${Math.round((passedCount / totalTests) * 100)}%)`);
