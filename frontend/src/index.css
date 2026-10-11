@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom ancient temple ambient animations */
+@keyframes torchFlicker {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: drop-shadow(0 0 16px rgba(255, 140, 56, 0.75));
+  }
+  25% {
+    opacity: 0.88;
+    transform: scale(0.97) translateY(1px);
+    filter: drop-shadow(0 0 12px rgba(255, 120, 30, 0.6));
+  }
+  50% {
+    opacity: 0.96;
+    transform: scale(1.03) translateY(-1px);
+    filter: drop-shadow(0 0 20px rgba(255, 160, 80, 0.85));
+  }
+  75% {
+    opacity: 0.92;
+    transform: scale(0.98);
+    filter: drop-shadow(0 0 14px rgba(255, 130, 40, 0.65));
+  }
+}
+
+@keyframes gentleShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px) rotate(-1deg); }
+  40% { transform: translateX(4px) rotate(1deg); }
+  60% { transform: translateX(-3px) rotate(-0.5deg); }
+  80% { transform: translateX(3px) rotate(0.5deg); }
+}
+
+@keyframes floatGentle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes goldPulse {
+  0%, 100% { box-shadow: 0 0 15px rgba(212, 175, 55, 0.4); }
+  50% { box-shadow: 0 0 30px rgba(243, 201, 75, 0.8); }
+}
+
+.animate-torch {
+  animation: torchFlicker 3s infinite ease-in-out;
+}
+
+.animate-shake {
+  animation: gentleShake 0.5s ease-in-out;
+}
+
+.animate-float {
+  animation: floatGentle 2.5s infinite ease-in-out;
+}
+
+.animate-gold-pulse {
+  animation: goldPulse 2s infinite ease-in-out;
+}
+
+/* Custom scrollbar for inventory & lists */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e1c18;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #5a3825;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #d4af37;
+}
