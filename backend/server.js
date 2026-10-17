@@ -63,10 +63,11 @@ app.use((req, res) => {
 // 6. Global Safe Error Handler
 // Catches unexpected runtime errors and sends a safe JSON message without exposing credentials
 app.use((err, req, res, next) => {
-  console.error('Server Internal Error:', err.message);
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: 'An unexpected error occurred on the temple server.'
+  const statusCode = err.status || err.statusCode || 500;
+  console.error(`Server Error (${statusCode}):`, err.message);
+  res.status(statusCode).json({
+    error: statusCode === 400 ? 'Bad Request' : 'Internal Server Error',
+    message: statusCode === 400 ? (err.message || 'Malformed request payload.') : 'An unexpected error occurred on the temple server.'
   });
 });
 

@@ -29,7 +29,7 @@ async function testConnection() {
     connection.release(); // Return connection back to the pool
     return { connected: true };
   } catch (error) {
-    return { connected: false, error: error.message };
+    return { connected: false, error: error.message || error.code || 'MySQL connection failed' };
   }
 }
 

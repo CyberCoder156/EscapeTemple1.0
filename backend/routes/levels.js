@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { 
+  sampleSubjects,
   sampleLevels, 
   sampleObjects, 
   sampleQuestions, 
@@ -74,7 +75,8 @@ router.get('/:levelId', async (req, res) => {
     res.setHeader('X-Data-Source', 'offline_fallback');
     const found = sampleLevels.find(l => l.id === levelId);
     if (!found) return res.status(404).json({ error: 'Not Found', message: 'Level not found.' });
-    res.json(found);
+    const subject = sampleSubjects.find(s => s.id === found.subject_id);
+    res.json({ ...found, subject_name: subject ? subject.name : 'Unknown' });
   }
 });
 
@@ -172,8 +174,8 @@ router.post('/:levelId/objects/:objectId/interact', async (req, res) => {
     // Check required item
     if (roomObject.required_item_id) {
       const [invRows] = await pool.query(
-        'SELECT id FROM player_inventory WHERE player_id = ? AND item_id = ?',
-        [playerId, roomObject.required_item_id]
+        'SELECT id FROM player_inventory WHERE player_id = ? AND item_id = ? AND level_id = ?',
+        [playerId, roomObject.required_item_id, levelId]
       );
 
       if (invRows.length === 0) {
@@ -320,6 +322,12 @@ router.get('/:levelId/question-session', async (req, res) => {
   }
 
   try {
+    // 0. Verify level exists
+    const [lvlRows] = await pool.query('SELECT id FROM levels WHERE id = ?', [levelId]);
+    if (lvlRows.length === 0) {
+      return res.status(404).json({ error: 'Not Found', message: 'Level not found.' });
+    }
+
     // 1. Fetch all questions for this level first
     const [questions] = await pool.query(
       'SELECT id FROM questions WHERE level_id = ? ORDER BY id ASC',
@@ -453,6 +461,12 @@ router.get('/:levelId/question-session', async (req, res) => {
   } catch (error) {
     console.warn('[DB Offline] Calculating question session via fallback logic');
     res.setHeader('X-Data-Source', 'offline_fallback');
+
+    // 0. Verify level exists
+    const levelExists = sampleLevels.some(l => l.id === levelId);
+    if (!levelExists) {
+      return res.status(404).json({ error: 'Not Found', message: 'Level not found.' });
+    }
 
     // 1. Questions configuration check
     const levelQuestions = sampleQuestions.filter(q => q.level_id === levelId);

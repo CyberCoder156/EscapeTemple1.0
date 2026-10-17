@@ -75,6 +75,10 @@ router.get('/:subjectId/levels', async (req, res) => {
   } catch (error) {
     console.warn('[DB Offline] Serving levels from fallback dataset');
     res.setHeader('X-Data-Source', 'offline_fallback');
+    const subjectExists = sampleSubjects.some(s => s.id === subjectId);
+    if (!subjectExists) {
+      return res.status(404).json({ error: 'Not Found', message: 'Subject not found.' });
+    }
     const filtered = sampleLevels.filter(l => l.subject_id === subjectId);
     res.json(filtered);
   }

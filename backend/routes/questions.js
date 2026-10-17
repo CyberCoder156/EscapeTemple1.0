@@ -54,16 +54,43 @@ router.post('/:questionId/extend', async (req, res) => {
   }
 
   try {
+    // 0. Verify question exists
+    const [qRows] = await pool.query('SELECT id, level_id FROM questions WHERE id = ?', [questionId]);
+    if (qRows.length === 0) {
+      return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
+    }
+
     const [rows] = await pool.query(
       'SELECT * FROM player_question_sessions WHERE player_id = ? AND question_id = ?',
       [String(playerId).trim(), questionId]
     );
 
+    let session;
     if (rows.length === 0) {
-      return res.status(400).json({ error: 'No Session', message: 'Question session has not started yet.' });
+      const qLevelId = qRows[0].level_id;
+      const [invRows] = await pool.query(
+        `SELECT pi.id FROM player_inventory pi
+         JOIN items i ON pi.item_id = i.id
+         WHERE pi.player_id = ? AND pi.level_id = ? AND i.item_type = 'key'`,
+        [String(playerId).trim(), qLevelId]
+      );
+      if (invRows.length === 0) {
+        return res.status(400).json({ error: 'No Session', message: 'Question session has not started yet.' });
+      }
+      const deadline = new Date(Date.now() + 25000);
+      await pool.query(
+        `INSERT INTO player_question_sessions (player_id, level_id, question_id, deadline, extensions_used)
+         VALUES (?, ?, ?, ?, 0)`,
+        [String(playerId).trim(), qLevelId, questionId, deadline]
+      );
+      session = {
+        deadline,
+        extensions_used: 0,
+        is_eliminated: false
+      };
+    } else {
+      session = rows[0];
     }
-
-    const session = rows[0];
 
     if (session.is_eliminated) {
       return res.status(403).json({ error: 'Eliminated', message: 'Player has been eliminated from this chamber.' });
@@ -112,10 +139,21 @@ router.post('/:questionId/extend', async (req, res) => {
     console.warn('[DB Offline] Handling extension via fallback logic');
     res.setHeader('X-Data-Source', 'offline_fallback');
 
-    const sessKey = `${playerId}_${levelId}_${questionId}`;
+    const targetQ = sampleQuestions.find(q => q.id === questionId);
+    if (!targetQ) {
+      return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
+    }
+
+    const qLevelId = targetQ.level_id;
+    const sessKey = `${playerId}_${qLevelId}_${questionId}`;
     let session = offlineQuestionSessions[sessKey];
 
     if (!session) {
+      const playerInv = offlinePlayerInventory[playerId] || [];
+      const hasKey = playerInv.some(i => i.level_id === qLevelId && i.item_type === 'key');
+      if (!hasKey) {
+        return res.status(400).json({ error: 'No Session', message: 'Question session has not started yet.' });
+      }
       session = {
         deadline: new Date(Date.now() + 25000),
         extensions_used: 0,
@@ -177,14 +215,18 @@ router.post('/:questionId/answer', async (req, res) => {
   }
 
   try {
-    // Determine levelId for the question
-    let qLevelId = levelId;
-    const [qRow] = await pool.query('SELECT level_id FROM questions WHERE id = ?', [questionId]);
-    if (qRow.length > 0) {
-      qLevelId = qRow[0].level_id;
-    } else if (!qLevelId) {
-      qLevelId = 1;
+    // 0. Verify question exists
+    const [rows] = await pool.query(
+      'SELECT id, level_id, correct_answer, option_a, option_b, option_c, option_d, points, explanation FROM questions WHERE id = ?',
+      [questionId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
     }
+
+    const question = rows[0];
+    const qLevelId = question.level_id;
 
     // 1. Verify key discovery for this specific chamber
     const [invRows] = await pool.query(
@@ -238,17 +280,7 @@ router.post('/:questionId/answer', async (req, res) => {
       }
     }
 
-    // 3. Fetch stored question and compare answers
-    const [rows] = await pool.query(
-      'SELECT id, level_id, correct_answer, option_a, option_b, option_c, option_d, points, explanation FROM questions WHERE id = ?',
-      [questionId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
-    }
-
-    const question = rows[0];
+    // 3. Compare answers
     const cleanSubmitted = String(submittedAnswer).trim().toLowerCase();
     const cleanStored = String(question.correct_answer).trim().toLowerCase();
     let isCorrect = (cleanSubmitted === cleanStored);
@@ -341,9 +373,14 @@ router.post('/:questionId/answer', async (req, res) => {
     console.warn('[DB Offline] Checking answer using fallback logic');
     res.setHeader('X-Data-Source', 'offline_fallback');
 
-    // Key discovery check for THIS specific level
-    const targetQ = sampleQuestions.find(q => q.id === questionId);
-    const qLevelId = targetQ ? targetQ.level_id : (levelId || 1);
+    // 0. Verify question exists first
+    const question = sampleQuestions.find(q => q.id === questionId);
+    if (!question) {
+      return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
+    }
+    const qLevelId = question.level_id;
+
+    // 1. Key discovery check for THIS specific level
     const playerInv = offlinePlayerInventory[playerId] || [];
     const hasKey = playerInv.some(i => i.level_id === qLevelId && i.item_type === 'key');
     if (!hasKey) {
@@ -382,9 +419,6 @@ router.post('/:questionId/answer', async (req, res) => {
         }
       }
     }
-
-    const question = sampleQuestions.find(q => q.id === questionId);
-    if (!question) return res.status(404).json({ error: 'Not Found', message: 'Question not found.' });
 
     const cleanSubmitted = String(submittedAnswer).trim().toLowerCase();
     const cleanStored = String(question.correct_answer).trim().toLowerCase();
@@ -434,7 +468,7 @@ router.post('/:questionId/answer', async (req, res) => {
         isCorrect: true,
         points: question.points || 10,
         message: 'Correct! The chamber mechanism activates. Prepare for the next cipher!',
-        explanation: 'Great job!',
+        explanation: question.explanation || 'Great job!',
         allQuestionsSolved: false,
         isDoorVisible: false,
         nextQuestionId: nextQuestion.id
@@ -445,7 +479,7 @@ router.post('/:questionId/answer', async (req, res) => {
         isCorrect: true,
         points: question.points || 10,
         message: 'Correct! All chamber ciphers solved. The massive stone exit door has appeared!',
-        explanation: 'Masterful solving!',
+        explanation: question.explanation || 'Masterful solving!',
         allQuestionsSolved: true,
         isDoorVisible: true
       });

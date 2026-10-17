@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { 
+  sampleSubjects,
   sampleLevels, 
   sampleQuestions,
   sampleRequirements,
@@ -70,9 +71,19 @@ router.get('/:playerId/progress', async (req, res) => {
   } catch (error) {
     console.warn('[DB Offline] Serving player progress from fallback dataset');
     res.setHeader('X-Data-Source', 'offline_fallback');
-    const prog = offlinePlayerProgress[playerId] || [
+    const rawProg = offlinePlayerProgress[playerId] || [
       { player_id: playerId, subject_id: 1, level_id: 1, status: 'unlocked', score: 0, attempts: 1 }
     ];
+    const prog = rawProg.map(p => {
+      const lvl = sampleLevels.find(l => l.id === p.level_id);
+      const subj = sampleSubjects.find(s => s.id === p.subject_id);
+      return {
+        ...p,
+        level_number: lvl ? lvl.level_number : 1,
+        level_name: lvl ? lvl.name : '',
+        subject_name: subj ? subj.name : ''
+      };
+    });
     res.json(prog);
   }
 });
@@ -142,10 +153,36 @@ router.post('/:playerId/levels/:levelId/start', async (req, res) => {
     const currentLevel = sampleLevels.find(l => l.id === levelId);
     if (!currentLevel) return res.status(404).json({ error: 'Not Found', message: 'Level does not exist.' });
 
+    if (currentLevel.level_number > 1) {
+      const prevLevel = sampleLevels.find(l => l.subject_id === currentLevel.subject_id && l.level_number === currentLevel.level_number - 1);
+      if (prevLevel) {
+        const playerProg = offlinePlayerProgress[playerId] || [];
+        const prevCompleted = playerProg.some(p => p.level_id === prevLevel.id && p.status === 'completed');
+        if (!prevCompleted) {
+          return res.status(403).json({
+            error: 'Level Locked',
+            message: `Level ${currentLevel.level_number} is locked! You must complete Level ${currentLevel.level_number - 1} first.`
+          });
+        }
+      }
+    }
+
     if (!offlinePlayerProgress[playerId]) {
-      offlinePlayerProgress[playerId] = [
-        { player_id: playerId, subject_id: currentLevel.subject_id, level_id: currentLevel.id, status: 'unlocked', score: 0, attempts: 1 }
-      ];
+      offlinePlayerProgress[playerId] = [];
+    }
+    const existingProg = offlinePlayerProgress[playerId].find(p => p.level_id === currentLevel.id);
+    if (existingProg) {
+      existingProg.attempts = (existingProg.attempts || 0) + 1;
+      if (existingProg.status !== 'completed') existingProg.status = 'in_progress';
+    } else {
+      offlinePlayerProgress[playerId].push({
+        player_id: playerId,
+        subject_id: currentLevel.subject_id,
+        level_id: currentLevel.id,
+        status: 'in_progress',
+        score: 0,
+        attempts: 1
+      });
     }
 
     res.json({
@@ -335,7 +372,7 @@ router.post('/:playerId/levels/:levelId/complete', async (req, res) => {
       completed: true,
       message: `Congratulations! You unlocked the exit door and escaped Level ${currentLevel.level_number}: ${currentLevel.name}!`,
       escapedLevel: currentLevel,
-      nextLevel
+      nextLevel: nextLevel || null
     });
   }
 });
@@ -351,6 +388,11 @@ router.post('/:playerId/levels/:levelId/restart', async (req, res) => {
   }
 
   try {
+    const [levelRows] = await pool.query('SELECT id FROM levels WHERE id = ?', [levelId]);
+    if (levelRows.length === 0) {
+      return res.status(404).json({ error: 'Not Found', message: 'Level does not exist.' });
+    }
+
     // Delete question sessions for this level
     await pool.query(
       'DELETE FROM player_question_sessions WHERE player_id = ? AND level_id = ?',
@@ -380,6 +422,11 @@ router.post('/:playerId/levels/:levelId/restart', async (req, res) => {
   } catch (error) {
     console.warn('[DB Offline] Restarting level via fallback logic');
     res.setHeader('X-Data-Source', 'offline_fallback');
+
+    const currentLevel = sampleLevels.find(l => l.id === levelId);
+    if (!currentLevel) {
+      return res.status(404).json({ error: 'Not Found', message: 'Level does not exist.' });
+    }
 
     const elimKey = `${playerId}_${levelId}`;
     offlineEliminatedLevels[elimKey] = false;

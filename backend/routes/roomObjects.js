@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const { sampleObjects } = require('../sampleData');
 
 // 1. GET /api/objects/:objectId
 // Retrieves single room object info (excluding secret hidden items)
@@ -31,8 +32,14 @@ router.get('/:objectId', async (req, res) => {
 
     res.json(rows[0]);
   } catch (error) {
-    console.error('Error fetching room object:', error.message);
-    res.status(500).json({ error: 'Database error', message: 'Could not retrieve object.' });
+    console.warn('[DB Offline] Serving single room object from fallback dataset');
+    res.setHeader('X-Data-Source', 'offline_fallback');
+    const obj = sampleObjects.find(o => o.id === objectId);
+    if (!obj) {
+      return res.status(404).json({ error: 'Not Found', message: 'Room object not found.' });
+    }
+    const { hidden_item_id, ...safeObj } = obj;
+    res.json(safeObj);
   }
 });
 
